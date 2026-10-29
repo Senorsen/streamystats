@@ -1,0 +1,71 @@
+name: Security build – streamystats-nextjs (CVE-2026-111497)
+
+# Builds a patched streamystats-nextjs image with Node pinned to a version
+# that fixes CVE-2026-111497 (Node2Shell, Brotli decoder out-of-bounds write).
+# Upstream is unmaintained (last commit 2026-09-13), so this fork carries the fix.
+
+on:
+  push:
+    branches:
+      - "fix/cve-2026-111497-node26.12.1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE: ghcr.io/${{ github.repository_owner }}/streamystats-nextjs
+  IMAGE_TAG: v2.20.0-node26.12.1
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase image name
+        id: img
+        run: echo "name=$(echo '${{ env.IMAGE }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Build & push streamystats-nextjs
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/nextjs-app/Dockerfile
+          platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            VERSION=v2.20.0-node26.12.1
+            COMMIT_SHA=${{ github.sha }}
+            BUILD_TIME=${{ github.event.head_commit.timestamp }}
+          push: true
+          tags: |
+            ${{ steps.img.outputs.name }}:${{ env.IMAGE_TAG }}
+            ${{ steps.img.outputs.name }}:${{ github.sha }}
+
+      - name: Gate – verify runtime Node is patched for CVE-2026-111497
+        run: |
+          set -euo pipefail
+          image="${{ steps.img.outputs.name }}:${{ env.IMAGE_TAG }}"
+          echo "Inspecting runtime node version in $image"
+          v=$(docker run --rm --entrypoint node "$image" -v)
+          echo "Reported: $v"
+          echo "$v" | tr -d 'v' | awk -F. '
+            { major=$1; minor=$2; patch=$3
+              ok = (major==22 && (minor>23 || (minor==23 && patch>=4))) \
+                || (major==24 && (minor>22 || (minor==22 && patch>=1))) \
+                || (major==26 && (minor>12 || (minor==12 && patch>=1))) \
+                || (major>26)
+              if (!ok) { print "node " $0 " is NOT patched for CVE-2026-111497"; exit 1 }
+              print "node " $0 " is patched" }'

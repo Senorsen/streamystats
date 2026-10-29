@@ -50,7 +50,9 @@ RUN --mount=type=cache,target=/app/apps/nextjs-app/.next/cache \
     bun --bun next build --experimental-build-mode compile
 
 # Production runtime stage
-FROM node:26-alpine AS runner
+# Pinned to 26.12.1 to fix CVE-2026-111497 (Node2Shell, Brotli decoder OOB write).
+# Do not change back to the floating node:26-alpine tag without re-checking the fix version.
+FROM node:26.12.1-alpine AS runner
 
 RUN apk add --no-cache libc6-compat vips curl
 
